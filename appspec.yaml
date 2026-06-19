@@ -1,0 +1,21 @@
+version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        # Replace with your actual Task Definition ARN after creation
+        # Format: arn:aws:ecs:us-east-1:<ACCOUNT_ID>:task-definition/swiggy:<REVISION>
+        # CodeDeploy will auto-update this from imageDetail.json during pipeline execution
+        TaskDefinition: <TASK_DEFINITION_ARN>
+        LoadBalancerInfo:
+          ContainerName: "swiggy"
+          ContainerPort: 3000
+        PlatformVersion: "LATEST"
+
+# Optional lifecycle hooks — uncomment if you need pre/post validation Lambdas
+# Hooks:
+#   - BeforeInstall: "LambdaFunctionToValidateBeforeInstall"
+#   - AfterInstall: "LambdaFunctionToValidateAfterInstall"
+#   - AfterAllowTestTraffic: "LambdaFunctionToValidateAfterTestTrafficShifts"
+#   - BeforeAllowTraffic: "LambdaFunctionToValidateBeforeAllowingProductionTraffic"
+#   - AfterAllowTraffic: "LambdaFunctionToValidateAfterAllowingProductionTraffic"

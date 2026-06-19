@@ -1,0 +1,92 @@
+version: 0.2
+
+env:
+  parameter-store:
+    SONAR_TOKEN: /cicd/sonar/sonar-token
+    DOCKER_USERNAME: /cicd/docker-credentials/username
+    DOCKER_PASSWORD: /cicd/docker-credentials/password
+    DOCKER_REGISTRY_URL: /cicd/docker-registry/url
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+    commands:
+      - echo "---- Installing dependencies ----"
+      # Install SonarScanner
+      - wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+      - unzip sonar-scanner-cli-5.0.1.3006-linux.zip
+      - export PATH=$PATH:$(pwd)/sonar-scanner-5.0.1.3006-linux/bin
+      # Install OWASP Dependency-Check
+      - wget https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.3/dependency-check-8.4.3-release.zip
+      - unzip dependency-check-8.4.3-release.zip
+      # Install Trivy
+      - wget https://github.com/aquasecurity/trivy/releases/download/v0.48.3/trivy_0.48.3_Linux-64bit.tar.gz
+      - tar zxvf trivy_0.48.3_Linux-64bit.tar.gz
+      - mv trivy /usr/local/bin/trivy
+
+  pre_build:
+    commands:
+      - echo "---- Pre-Build Phase ----"
+      - cd Swiggy_clone
+      - npm install
+
+      - echo "---- SonarQube Analysis ----"
+      - sonar-scanner
+          -Dsonar.projectKey=swiggy-clone
+          -Dsonar.sources=.
+          -Dsonar.host.url=http://$SONAR_HOST_URL:9000
+          -Dsonar.login=$SONAR_TOKEN
+
+      - echo "---- OWASP Dependency-Check ----"
+      - ../dependency-check/bin/dependency-check.sh
+          --scan .
+          --format HTML
+          --out dependency-check-report
+          --disableYarnAudit
+          --disableNodeAudit
+
+      - echo "---- Trivy File System Scan ----"
+      - trivy fs --exit-code 0 --severity HIGH,CRITICAL --format table .
+
+      - echo "---- Docker Login ----"
+      - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD $DOCKER_REGISTRY_URL
+
+  build:
+    commands:
+      - echo "---- Build Phase ----"
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - REPOSITORY_URI=$DOCKER_USERNAME/swiggy
+
+      - echo "---- Docker Build ----"
+      - docker build -t $REPOSITORY_URI:$IMAGE_TAG .
+      - docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest
+
+      - echo "---- Trivy Image Scan ----"
+      - trivy image --exit-code 0 --severity HIGH,CRITICAL --format table $REPOSITORY_URI:$IMAGE_TAG
+
+      - echo "---- Docker Push ----"
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - docker push $REPOSITORY_URI:latest
+
+      - echo "---- Generate imageDetail.json for CodeDeploy ----"
+      - cd ..
+      - printf '[{"name":"swiggy","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imageDetail.json
+
+  post_build:
+    commands:
+      - echo "---- Post-Build Phase ----"
+      - echo "Build completed on $(date)"
+
+artifacts:
+  files:
+    - imageDetail.json
+    - appspec.yaml
+    - taskdef.json
+  discard-paths: yes
+
+reports:
+  dependency-check-report:
+    files:
+      - "Swiggy_clone/dependency-check-report/dependency-check-report.html"
+    file-format: HTML
