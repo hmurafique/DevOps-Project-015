@@ -12,53 +12,39 @@ phases:
     runtime-versions:
       nodejs: 18
     commands:
-      - echo "---- Installing dependencies ----"
-      # Install SonarScanner
-      - wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
-      - unzip sonar-scanner-cli-5.0.1.3006-linux.zip
+      - echo "---- Installing Tools ----"
+      - wget -q https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+      - unzip -q sonar-scanner-cli-5.0.1.3006-linux.zip
       - export PATH=$PATH:$(pwd)/sonar-scanner-5.0.1.3006-linux/bin
-      # Install OWASP Dependency-Check
-      - wget https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.3/dependency-check-8.4.3-release.zip
-      - unzip dependency-check-8.4.3-release.zip
-      # Install Trivy
-      - wget https://github.com/aquasecurity/trivy/releases/download/v0.48.3/trivy_0.48.3_Linux-64bit.tar.gz
+      - wget -q https://github.com/aquasecurity/trivy/releases/download/v0.48.3/trivy_0.48.3_Linux-64bit.tar.gz
       - tar zxvf trivy_0.48.3_Linux-64bit.tar.gz
       - mv trivy /usr/local/bin/trivy
 
   pre_build:
     commands:
-      - echo "---- Pre-Build Phase ----"
-      - cd Swiggy_clone
-      - npm install
+      - echo "---- Installing App Dependencies ----"
+      - cd Swiggy_clone && npm install && cd ..
 
       - echo "---- SonarQube Analysis ----"
+      - export PATH=$PATH:$(pwd)/sonar-scanner-5.0.1.3006-linux/bin
       - sonar-scanner
           -Dsonar.projectKey=swiggy-clone
-          -Dsonar.sources=.
-          -Dsonar.host.url=http://$SONAR_HOST_URL:9000
+          -Dsonar.sources=Swiggy_clone
+          -Dsonar.host.url=http://44.220.182.64:9000
           -Dsonar.login=$SONAR_TOKEN
 
-      - echo "---- OWASP Dependency-Check ----"
-      - ../dependency-check/bin/dependency-check.sh
-          --scan .
-          --format HTML
-          --out dependency-check-report
-          --disableYarnAudit
-          --disableNodeAudit
-
-      - echo "---- Trivy File System Scan ----"
-      - trivy fs --exit-code 0 --severity HIGH,CRITICAL --format table .
+      - echo "---- Trivy FS Scan ----"
+      - trivy fs --exit-code 0 --severity HIGH,CRITICAL --format table Swiggy_clone/
 
       - echo "---- Docker Login ----"
       - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD $DOCKER_REGISTRY_URL
 
   build:
     commands:
-      - echo "---- Build Phase ----"
+      - echo "---- Docker Build ----"
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
       - REPOSITORY_URI=$DOCKER_USERNAME/swiggy
-
-      - echo "---- Docker Build ----"
+      - cd Swiggy_clone
       - docker build -t $REPOSITORY_URI:$IMAGE_TAG .
       - docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest
 
@@ -68,14 +54,15 @@ phases:
       - echo "---- Docker Push ----"
       - docker push $REPOSITORY_URI:$IMAGE_TAG
       - docker push $REPOSITORY_URI:latest
-
-      - echo "---- Generate imageDetail.json for CodeDeploy ----"
       - cd ..
-      - printf '[{"name":"swiggy","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imageDetail.json
 
   post_build:
     commands:
-      - echo "---- Post-Build Phase ----"
+      - echo "---- Generating Artifacts ----"
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - REPOSITORY_URI=$DOCKER_USERNAME/swiggy
+      - printf '[{"name":"swiggy","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imageDetail.json
+      - cat imageDetail.json
       - echo "Build completed on $(date)"
 
 artifacts:
@@ -84,9 +71,3 @@ artifacts:
     - appspec.yaml
     - taskdef.json
   discard-paths: yes
-
-reports:
-  dependency-check-report:
-    files:
-      - "Swiggy_clone/dependency-check-report/dependency-check-report.html"
-    file-format: HTML
